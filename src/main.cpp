@@ -1,7 +1,5 @@
 #include <Arduino.h>
-#include "BasicStepperDriver.h"
 #include "SimpleCLI.h"
-#include "CircularBuffer.h"
 #include "Ticker.h"
 #include "PropertyNode.h"
 #include "SimpleCLIInterface.h"
