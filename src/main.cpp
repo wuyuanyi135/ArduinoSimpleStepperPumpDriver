@@ -145,6 +145,8 @@ void setup() {
             digitalWrite(PIN_ENABLE, HIGH);
         } else {
             Serial.println("Enable output");
+            // Already enabled. No need to re-ramp.
+            if (enable.get_value()) { return; }
             current_sps = 0;
             ramp_scheduler.start();
 
