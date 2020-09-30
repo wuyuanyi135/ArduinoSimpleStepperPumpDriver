@@ -144,6 +144,8 @@ void setup() {
             Serial.println("Disable output");
             digitalWrite(PIN_ENABLE, HIGH);
         } else {
+            // Already enabled. No need to re-ramp.
+            if (oldVal) { return; }
             Serial.println("Enable output");
             // Already enabled. No need to re-ramp.
             if (enable.get_value()) { return; }
