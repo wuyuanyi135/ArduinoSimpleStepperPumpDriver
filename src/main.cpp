@@ -96,7 +96,7 @@ void setup() {
         client.setServer(WiFi.gatewayIP(), 1883);
         std::stringstream convert;
         convert << ESP.getChipId();
-        client.connect(convert.str().c_str());
+        client.connect(convert.str().c_str(), (convert.str() + "/status").c_str(), 0, true, "off");
         cnt = 200;
         while (!client.connected() && cnt-- > 0) {
             Serial.println("Connecting to MQTT server");
@@ -104,7 +104,8 @@ void setup() {
         }
         if (cnt > 0) {
             Serial.println("Connected to MQTT server, configuring subscriptions");
-
+            client.publish((convert.str() + "/desc").c_str(), "Arduino Stepper Pump Driver", true);
+            client.publish((convert.str() + "/status").c_str(), "on", true);
             target_sps.register_interface(mqttInterface);
             enable.register_interface(mqttInterface);
             ramp.register_interface(mqttInterface);
