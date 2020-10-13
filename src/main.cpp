@@ -134,6 +134,18 @@ void setup() {
     });
 
     target_sps.set_update_callback([](double oldVal, double newVal) {
+        if (newVal == 0) {
+            Serial.print("Disabling due to sps==0");
+            enable.set_value(false, true);
+        } else {
+            if (!enable.get_value()) {
+                Serial.print("Enabling due to sps != 0");
+                // Do not trigger the callback because it has some ramping schedule we do not want.
+                enable.set_value(true, false);
+                digitalWrite(PIN_ENABLE, LOW);
+
+            }
+        }
         Serial.print("Setting sps to ");
         Serial.println(newVal);
         ramp_scheduler.start();
@@ -144,7 +156,6 @@ void setup() {
             Serial.println("Disable output");
             digitalWrite(PIN_ENABLE, HIGH);
         } else {
-            // Already enabled. No need to re-ramp.
             if (oldVal) { return; }
             Serial.println("Enable output");
             // Already enabled. No need to re-ramp.
