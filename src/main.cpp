@@ -6,29 +6,37 @@
 #include "Ticker.h"
 #include <Arduino.h>
 #include <sstream>
+#include "ESP8266Init.h"
+#include <ArduinoOTA.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <ESP8266HTTPUpdateServer.h>
 
 
 #define PIN_STEP D2
 #define PIN_ENABLE D4
 #define PIN_DIR D1
 
+ESP8266Init esp8266Init{"DCHost", "dchost000000", "192.168.43.1", 1883,
+                        "Simple stepper driver v1.1"};
+
 SimpleCLI cli;
-WiFiClient espClient;
-PubSubClient client(espClient);
-
 String buf;
-PropertyNode<double> target_sps("sps", 0.0);
-PropertyNode<double> ramp("ramp", 800.0);
-PropertyNode<bool> enable("enable", false);
+PropertyNode<double> target_sps("sps", 0.0, false, true);
+PropertyNode<double> ramp("ramp", 800.0, false, true);
 
+//PropertyNode<bool> enable("enable", false);
 SimpleCLIInterface cliInterface(cli, Serial, true);
-PubSubClientInterface mqttInterface(client);
 
+PubSubClientInterface mqttInterface(esp8266Init.client);
 bool step_state = false;
 double current_sps = 0;
 //double target_sps = 0;
 //double ramp = 800; // sps per second
+bool enabled = false;
 double schedule_time = 100;
+ESP8266WebServer httpServer(80);
+ESP8266HTTPUpdateServer httpUpdater;
 
 Ticker ticker(
         []() {
@@ -77,53 +85,54 @@ Ticker ramp_scheduler(
         schedule_time, 1, MILLIS
 );
 
+void set_enable(bool newVal) {
+    if (!newVal) {
+        Serial.println("Disable output");
+        digitalWrite(PIN_ENABLE, HIGH);
+        enabled = false;
+    } else {
+        Serial.println("Enable output");
+        // Already enabled. No need to re-ramp.
+        if (enabled) { return; }
+        current_sps = 0;
+        ramp_scheduler.start();
+
+        digitalWrite(PIN_ENABLE, LOW);
+        enabled = true;
+    }
+
+}
+
+void configure_ota() {
+    std::stringstream ss;
+    ss << ESP.getChipId();
+
+    MDNS.begin((("update_" + ss.str()).c_str()));
+    httpUpdater.setup(&httpServer);
+    httpServer.begin();
+    MDNS.addService("http", "tcp", 80);
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("Simple Stepper Pump Driver - v0.1");
 
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin("DCHost", "dchost000000");
-    int cnt = 200;
-    while (!WiFi.isConnected() && cnt-- > 0) {
-        Serial.println("WiFi connecting...");
-        delay(200);
+    // write your initialization code here
+    if (esp8266Init.blocking_init() != ESP8266Init::FINISHED) {
+        delay(1000);
+        ESP.restart();
     }
-    if (cnt > 0) {
-        Serial.print("WiFi connected: ");
-        Serial.println(WiFi.localIP().toString());
-
-        client.setServer(WiFi.gatewayIP(), 1883);
-        std::stringstream convert;
-        convert << ESP.getChipId();
-        client.connect(convert.str().c_str(), (convert.str() + "/status").c_str(), 0, true, "off");
-        cnt = 200;
-        while (!client.connected() && cnt-- > 0) {
-            Serial.println("Connecting to MQTT server");
-            delay(200);
-        }
-        if (cnt > 0) {
-            Serial.println("Connected to MQTT server, configuring subscriptions");
-            client.publish((convert.str() + "/desc").c_str(), "Arduino Stepper Pump Driver", true);
-            client.publish((convert.str() + "/status").c_str(), "on", true);
-            target_sps.register_interface(mqttInterface);
-            enable.register_interface(mqttInterface);
-            ramp.register_interface(mqttInterface);
-        } else {
-            Serial.println("Failed to connect to MQTT server.");
-        }
-
-    } else {
-        Serial.println("WiFi not connected. MQTT disabled.");
-    }
-
+    target_sps.register_interface(mqttInterface);
+//    enable.register_interface(mqttInterface);
+    ramp.register_interface(mqttInterface);
+    configure_ota();
 
     pinMode(PIN_STEP, OUTPUT);
     pinMode(PIN_ENABLE, OUTPUT);
     pinMode(PIN_DIR, OUTPUT);
 
     target_sps.register_interface(cliInterface);
-    enable.register_interface(cliInterface);
+//    enable.register_interface(cliInterface);
     ramp.register_interface(cliInterface);
 
     target_sps.set_validator([](double v) {
@@ -136,35 +145,17 @@ void setup() {
     target_sps.set_update_callback([](double oldVal, double newVal) {
         if (newVal == 0) {
             Serial.print("Disabling due to sps==0");
-            enable.set_value(false, true);
+            set_enable(false);
         } else {
-            if (!enable.get_value()) {
+            if (!enabled) {
                 Serial.print("Enabling due to sps != 0");
-                // Do not trigger the callback because it has some ramping schedule we do not want.
-                enable.set_value(true, false);
-                digitalWrite(PIN_ENABLE, LOW);
-
+                set_enable(true);
             }
         }
         Serial.print("Setting sps to ");
         Serial.println(newVal);
         ramp_scheduler.start();
         ticker.start();
-    });
-    enable.set_update_callback([](bool oldVal, bool newVal) {
-        if (!newVal) {
-            Serial.println("Disable output");
-            digitalWrite(PIN_ENABLE, HIGH);
-        } else {
-            if (oldVal) { return; }
-            Serial.println("Enable output");
-            // Already enabled. No need to re-ramp.
-            if (enable.get_value()) { return; }
-            current_sps = 0;
-            ramp_scheduler.start();
-
-            digitalWrite(PIN_ENABLE, LOW);
-        }
     });
 }
 
@@ -181,5 +172,7 @@ void loop() {
     }
     ticker.update();
     ramp_scheduler.update();
-    client.loop();
+    esp8266Init.client.loop();
+    httpServer.handleClient();
+    MDNS.update();
 }
